@@ -1,0 +1,20 @@
+{
+    "name": "rminks/rcon",
+    "type": "package",
+    "description": "Source RCON Protocol library for laravel",
+    "keywords": ["RCON", "Source", "Valve", "Minecraft"],
+    "license": "MIT",
+    "require": {},
+    "autoload": {
+        "psr-4": {
+            "RMinks\\RCON\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "RMinks\\RCON\\Providers\\RCONServiceProvider"
+            ]
+        }
+    }
+}
