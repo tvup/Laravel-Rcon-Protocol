@@ -108,19 +108,52 @@ class RCONService implements RCONServiceContract
 
     private function readPacket()
     {
-        $size_data = $this->socketService->getPacket(4);
-        $size_pack = unpack('V1size', $size_data);
-        $size = $size_pack['size'];
+        $size = 4097; // Hack to start the loop
+        $readBytes = 0; // Keep track of read bytes
 
-        /* if size is > 4096, the response will be in multiple packets.
-        this needs to be address. get more info about multi-packet responses
-        from the RCON protocol specification at
-        https://developer.valvesoftware.com/wiki/Source_RCON_Protocol
-        currently, this script does not support multi-packet responses.*/
+        while($size > 4096) {
+            //Read the size of the packet
+            $size_data = $this->socketService->getPacket(4);
+            $size_pack = unpack('V1size', $size_data);
+            $size = $size_pack['size'];
+            $readBytes = $readBytes + 4; //Keep track of read bytes
+            $pattern = 'V1id/V1type/a*body'; // Pattern to expect for unpacking the packet
 
+            // If the data is exceeding 8454 bytes it will also be cut, and we need to read up to that size, and continue with the remainder
+            if(($readBytes+$size)>=8454) {
+                $restChunckToRead = 8454 - $readBytes;
+                $size = $size - $restChunckToRead; // Set for the read after this one
+
+                $packet_pack = $this->extractDataFrompacket($restChunckToRead, $packet_pack['body'], $pattern);
+                $readBytes = $size; // Reset read bytes
+                $pattern = 'a*body'; // Next packet will not have id and type
+            }
+
+            $packet_pack = $this->extractDataFrompacket($size,$packet_pack['body'] ?? '', $pattern);
+            $readBytes = $readBytes + $size; //Keep track of read bytes
+
+            $id = $packet_pack['id'] ?? $id; // In case of multiple packets, keep the id when available
+            $type = $packet_pack['type'] ?? $type; // In case of multiple packets, keep the type when available
+        }
+
+        return [
+            'id' => $id,
+            'type' => $type,
+            'body' => ($packet_pack['body'] ?? '') . "\x00\x00"
+        ];
+    }
+
+    /**
+     * @param int $size
+     * @param string $body
+     * @param string $pattern
+     * @return array
+     */
+    public function extractDataFromPacket(int $size, string $body, string $pattern): array
+    {
         $packet_data = $this->socketService->getPacket($size);
-        $packet_pack = unpack('V1id/V1type/a*body', $packet_data);
-
+        $packet_pack = unpack($pattern, $packet_data);
+        $packet_pack['body'] = $body . rtrim($packet_pack['body'], "\x00");
         return $packet_pack;
     }
 }
