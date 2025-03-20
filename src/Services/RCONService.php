@@ -54,8 +54,8 @@ class RCONService implements RCONServiceContract
                 while ($size >= self::PACKET_DATA_MAX_SIZE_WITH_CONTROL_CHARS) {
                     $responseText = rtrim($responseText, "\x00"); //If we are in fact concatenating multiple packets, we need to remove the null bytes from the previous packet
                     $response = $this->readPacket();
-                    $size = $response['size']; //Set the size which controls the loop
-                    if ($response['id'] == self::PACKET_COMMAND) {
+                    $size = $response['size'] ?? 0; //Set the size which controls the loop
+                    if (array_key_exists('id', $response) && $response['id'] == self::PACKET_COMMAND) {
                         if ($response['type'] == self::SERVERDATA_RESPONSE_VALUE) {
                             $responseText = $responseText . $response['body'];
                         }
@@ -117,6 +117,9 @@ class RCONService implements RCONServiceContract
     private function readPacket()
     {
         $size_data = $this->socketService->getPacket(4);
+        if(null === $size_data) {
+            return [];
+        }
         $size_pack = unpack('V1size', $size_data);
         $size = $size_pack['size'];
 
