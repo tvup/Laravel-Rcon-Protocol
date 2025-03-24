@@ -25,6 +25,9 @@ class RCONService implements RCONServiceContract
     const SERVERDATA_EXECCOMMAND = 2;
     const SERVERDATA_RESPONSE_VALUE = 0;
 
+    const PACKET_DATA_MAX_SIZE_WITH_CONTROL_CHARS = 4096+10;
+    const CONTROL_CHARS_BYTES = 8;
+
 
     public function __construct(ResponseServiceContract $responseService, SocketServiceContract $socketService, string $host, int $port, string $password, float $timeout)
     {
@@ -46,15 +49,20 @@ class RCONService implements RCONServiceContract
         {
             if ($this->socketService->send($this->writePacket(self::PACKET_COMMAND, self::SERVERDATA_EXECCOMMAND, $command)))
             {
-                $response = $this->readPacket();
-                if ($response['id'] == self::PACKET_COMMAND)
-                {
-                    if ($response['type'] == self::SERVERDATA_RESPONSE_VALUE)
-                    {
-                        $this->responseService->addResponse($response['body']);
-                        return true;
+                $responseText = '';
+                $size = self::PACKET_DATA_MAX_SIZE_WITH_CONTROL_CHARS;
+                while ($size >= self::PACKET_DATA_MAX_SIZE_WITH_CONTROL_CHARS) {
+                    $responseText = rtrim($responseText, "\x00"); //If we are in fact concatenating multiple packets, we need to remove the null bytes from the previous packet
+                    $response = $this->readPacket();
+                    $size = $response['size'] ?? 0; //Set the size which controls the loop
+                    if (array_key_exists('id', $response) && $response['id'] == self::PACKET_COMMAND) {
+                        if ($response['type'] == self::SERVERDATA_RESPONSE_VALUE) {
+                            $responseText = $responseText . $response['body'];
+                        }
                     }
                 }
+                $this->responseService->addResponse($responseText);
+                return true;
             }
         }
 
@@ -109,18 +117,42 @@ class RCONService implements RCONServiceContract
     private function readPacket()
     {
         $size_data = $this->socketService->getPacket(4);
+        if(null === $size_data) {
+            return [];
+        }
         $size_pack = unpack('V1size', $size_data);
         $size = $size_pack['size'];
 
-        /* if size is > 4096, the response will be in multiple packets.
-        this needs to be address. get more info about multi-packet responses
-        from the RCON protocol specification at
-        https://developer.valvesoftware.com/wiki/Source_RCON_Protocol
-        currently, this script does not support multi-packet responses.*/
+        $pattern = 'V1id/V1type/a*body';
+        $packet_pack = $this->getUnpack($size, $pattern);
 
-        $packet_data = $this->socketService->getPacket($size);
-        $packet_pack = unpack('V1id/V1type/a*body', $packet_data);
+        //Check read bytes and compare to size
+        $read = mb_strlen($packet_pack['body']) + self::CONTROL_CHARS_BYTES;
+        $remainToRead = $packet_pack['size'] - $read;
+
+        // Get missing bytes (if fetch happended before an answer was fully sent)
+        $packet_pack['body'] = $remainToRead > 0 ? $this->readMissingBytes($remainToRead, $packet_pack['body']) : $packet_pack['body'];
 
         return $packet_pack;
+    }
+
+    /**
+     * @param int $size
+     * @param string $pattern
+     * @return array<string, string|int>
+     */
+    private function getUnpack(int $size, string $pattern) : array
+    {
+        $packet_data = $this->socketService->getPacket($size);
+        $packet_pack = unpack($pattern, $packet_data);
+        $packet_pack['size'] = $size;
+        return $packet_pack;
+    }
+
+    private function readMissingBytes(int $remainToRead, string $body) : string
+    {
+        $pattern = 'a*body';
+        $packet_pack = $this->getUnpack($remainToRead, $pattern);
+        return $body . $packet_pack['body'];
     }
 }
